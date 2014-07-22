@@ -37,28 +37,41 @@ func NewDirectionsAPI(api_key string) *DirectionsAPI {
 	return &api
 }
 
-func (api *DirectionsAPI) GetDistance(from, to Coord, mode string) (uint64, error) {
-	job := pool.NewJob(directions_request{from, to, mode})
+func (api *DirectionsAPI) GetDistance(trip Trip) (uint64, error) {
+	job := pool.NewJob(trip)
+
 	api.pool.Submit(job)
-	result := job.Result()
-	switch result.(type) {
-	case uint64:
-		return result.(uint64), nil
-	case error:
-		return 0, result.(error)
-	default:
-		return 0, errors.New("unexpected result from pool")
+
+	return extract_distance(job.Result())
+}
+
+func (api *DirectionsAPI) GetDistances(trips []Trip) map[Trip]uint64 {
+	jobs := make(map[Trip]pool.Job)
+	for _, trip := range trips {
+		job := pool.NewJob(trip)
+		jobs[trip] = job
+
+		api.pool.Submit(job)
 	}
+
+	result := make(map[Trip]uint64)
+	for trip, job := range jobs {
+		if distance, err := extract_distance(job.Result()); err == nil {
+			result[trip] = distance
+		}
+	}
+
+	return result
 }
 
 func (api *DirectionsAPI) get_distance(id uint, payload interface{}) interface{} {
-	req := payload.(directions_request)
+	req := payload.(Trip)
 
 	q := url.Values{}
 	q.Add("key", api.api_key)
-	q.Add("origin", req.from.String())
-	q.Add("destination", req.to.String())
-	q.Add("mode", req.mode)
+	q.Add("origin", req.From.String())
+	q.Add("destination", req.To.String())
+	q.Add("mode", req.Mode)
 
 	resp, err := http.Get(base_url + q.Encode())
 	if err != nil {
@@ -79,6 +92,22 @@ func (api *DirectionsAPI) get_distance(id uint, payload interface{}) interface{}
 	return distance
 }
 
+func extract_distance(result interface{}) (uint64, error) {
+	switch result.(type) {
+	case uint64:
+		return result.(uint64), nil
+	case error:
+		return 0, result.(error)
+	default:
+		return 0, errors.New("unexpected result from pool")
+	}
+}
+
+type Trip struct {
+	From, To Coord
+	Mode     string
+}
+
 type Coord struct {
 	Lat float64
 	Lng float64
@@ -86,11 +115,6 @@ type Coord struct {
 
 func (coord Coord) String() string {
 	return fmt.Sprintf("%.8f,%.8f", coord.Lat, coord.Lng)
-}
-
-type directions_request struct {
-	from, to Coord
-	mode     string
 }
 
 type directions_response struct {
